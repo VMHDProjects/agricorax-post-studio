@@ -203,7 +203,7 @@ Oferta de la semana | 20% | DESCUENTO | En herbicidas seleccionados</textarea>
         <div id="vProgWrap" hidden><div class="prog"><i id="vProg"></i></div><p class="hint" id="vProgTxt"></p></div>
         <div id="vOut" class="stack" hidden>
           <video id="vResult" controls playsinline></video>
-          <div class="btns"><button class="btn" id="vDl" type="button">Descargar video</button><button class="btn ghost" id="vShare" type="button">Compartir video</button></div>
+          <div class="btns"><button class="btn" id="vDl" type="button">Descargar video MP4</button><button class="btn ghost" id="vShare" type="button">Compartir video</button></div>
         </div>
         <p class="hint">Los botones PNG/JPG guardan el cuadro actual del video, útil como portada.</p>
       </div>
@@ -510,6 +510,7 @@ $('shareLote').onclick=()=>share(loteItems.map(it=>new File([it.blob],it.name,{t
 
 /* ---------- eventos ---------- */
 document.querySelectorAll('#paneUno input, .chk input').forEach(el=>el.addEventListener('input',render));
+function videoUI(on){$('vbox').hidden=!on;$('dlPng').textContent=on?'Guardar portada PNG':'Descargar PNG';$('dlJpg').textContent=on?'Guardar portada JPG':'Descargar JPG';$('dlPng').classList.toggle('ghost',on);}
 let mediaURL=null,rafId=0,vRec=null,vBlob=null,vName='';
 function stopVideo(){const v=state.photo;if(v&&v.tagName==='VIDEO'){v.pause();}cancelAnimationFrame(rafId);rafId=0;}
 function loop(){const v=state.photo;if(!v||v.tagName!=='VIDEO'){rafId=0;return;}paint();
@@ -521,12 +522,12 @@ function pickMime(){if(!window.MediaRecorder)return null;
 $('foto').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;
   stopVideo();if(mediaURL)URL.revokeObjectURL(mediaURL);mediaURL=URL.createObjectURL(f);$('vOut').hidden=true;
   if(f.type.startsWith('video/')){const v=document.createElement('video');v.muted=true;v.loop=true;v.playsInline=true;v.setAttribute('playsinline','');v.preload='auto';v.src=mediaURL;
-    v.addEventListener('loadeddata',()=>{state.photo=v;$('vbox').hidden=false;
+    v.addEventListener('loadeddata',()=>{state.photo=v;videoUI(true);
       const m=pickMime();$('vInfo').textContent=`Duración ${fmtT(v.duration)}. `+(m?(m.includes('mp4')?'Se exporta en MP4, listo para Instagram.':'Este navegador exporta en WebM. Para MP4 usa Safari o Chrome actualizado.'):'Este navegador no puede exportar video. Prueba con Chrome o Safari actualizado.');
       $('vExport').disabled=!m;$('vPlay').textContent='Pausar vista previa';v.play().catch(()=>{$('vPlay').textContent='Reproducir vista previa'});
       if(!rafId)loop();toast('Video cargado');},{once:true});
     v.addEventListener('error',()=>toast('No se pudo abrir ese video. Prueba con MP4 o MOV.'),{once:true});
-  }else{const im=new Image();im.onload=()=>{state.photo=im;$('vbox').hidden=true;render();toast('Foto cargada')};im.src=mediaURL;}
+  }else{const im=new Image();im.onload=()=>{state.photo=im;videoUI(false);render();toast('Foto cargada')};im.src=mediaURL;}
 });
 $('vPlay').onclick=()=>{const v=state.photo;if(!v||v.tagName!=='VIDEO'||vRec)return;
   if(v.paused){v.play();$('vPlay').textContent='Pausar vista previa';if(!rafId)loop();}else{v.pause();$('vPlay').textContent='Reproducir vista previa';}};
