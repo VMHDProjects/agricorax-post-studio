@@ -652,6 +652,7 @@ function videoUI(on){$('vbox').hidden=!on;$('dlPng').textContent=on?'Guardar por
 let mediaURL=null,rafId=0,vRec=null,vBlob=null,vName='';
 function stopVideo(){const v=state.photo;if(v&&v.tagName==='VIDEO'){v.pause();}cancelAnimationFrame(rafId);rafId=0;}
 function loop(){const v=state.photo;if(!v||v.tagName!=='VIDEO'){rafId=0;return;}if(ready(v)&&!v.seeking)paint();
+  if(vRec&&v.duration&&vRec.state==='recording'&&(v.ended||v.currentTime>=v.duration-0.05)){vRec.stop();}
   if(vRec&&v.duration){const p=Math.min(1,v.currentTime/v.duration);$('vProg').style.width=(p*100)+'%';$('vProgTxt').textContent=`Grabando… ${fmtT(v.currentTime)} de ${fmtT(v.duration)}. Mantén esta pantalla abierta.`;}
   rafId=requestAnimationFrame(loop);}
 function fmtT(t){t=Math.max(0,Math.round(t||0));return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');}
@@ -670,28 +671,47 @@ $('foto').addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;
 $('vPlay').onclick=()=>{const v=state.photo;if(!v||v.tagName!=='VIDEO'||vRec)return;
   if(v.paused){v.play();$('vPlay').textContent='Pausar vista previa';if(!rafId)loop();}else{v.pause();$('vPlay').textContent='Reproducir vista previa';}};
 let aCtx=null,aSrc=null,aDest=null;
-$('vExport').onclick=async()=>{const v=state.photo;if(!v||v.tagName!=='VIDEO')return;
-  if(vRec){vRec.stop();return;}
-  const mime=pickMime();if(!mime){toast('Este navegador no puede exportar video.');return;}
+function vFail(msg){toast(msg);$('vProgWrap').hidden=false;$('vProg').style.width='0%';$('vProgTxt').textContent='⚠️ '+msg;
+  $('vExport').textContent='Exportar video';$('vPlay').disabled=false;const v=state.photo;if(v&&v.tagName==='VIDEO'){v.loop=true;v.muted=true;v.play().catch(()=>{});}}
+function mimeList(){if(!window.MediaRecorder)return [];
+  return ['video/mp4;codecs=avc1.42E01E,mp4a.40.2','video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].filter(m=>{try{return MediaRecorder.isTypeSupported(m)}catch(e){return false}});}
+$('vExport').onclick=()=>{const v=state.photo;if(!v||v.tagName!=='VIDEO')return;
+  if(vRec){if(vRec.state!=='inactive')vRec.stop();return;}
+  if(!window.MediaRecorder||!cv.captureStream){vFail('Este navegador no puede grabar video. Usa Safari o Chrome actualizado.');return;}
+  // Todo esto ocurre dentro del toque: el celular permite reproducir con sonido solo aquí.
+  let audio=$('vAudio').checked;
+  if(audio){try{const AC=window.AudioContext||window.webkitAudioContext;if(!aCtx){aCtx=new AC();aSrc=aCtx.createMediaElementSource(v);aDest=aCtx.createMediaStreamDestination();aSrc.connect(aDest);}aCtx.resume();}catch(e){audio=false;}}
+  v.muted=!audio;let unlock;try{unlock=v.play();}catch(e){unlock=Promise.reject(e);}
+  $('vExport').textContent='Preparando…';$('vPlay').disabled=true;$('vOut').hidden=true;$('vProgWrap').hidden=false;$('vProg').style.width='0%';$('vProgTxt').textContent='Preparando la grabación…';
+  runExport(v,audio,Promise.resolve(unlock));};
+async function runExport(v,audio,unlock){
+  try{await unlock;}catch(e){
+    if(audio){v.muted=true;audio=false;try{await v.play();toast('Se exporta sin audio');}catch(e2){vFail('El navegador no dejó reproducir el video. Toca “Reproducir vista previa” y vuelve a exportar.');return;}}
+    else{vFail('El navegador no dejó reproducir el video. Toca “Reproducir vista previa” y vuelve a exportar.');return;}}
+  v.pause();v.loop=false;
+  await new Promise(r=>{if(v.currentTime===0){r();return;}v.addEventListener('seeked',r,{once:true});v.currentTime=0;setTimeout(r,1500);});
   const stream=cv.captureStream(30);
-  if($('vAudio').checked){try{if(!aCtx){aCtx=new (window.AudioContext||window.webkitAudioContext)();aSrc=aCtx.createMediaElementSource(v);aDest=aCtx.createMediaStreamDestination();aSrc.connect(aDest);}
-      await aCtx.resume();aDest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));v.muted=false;}catch(e){toast('Se exporta sin audio.');}}
-  const chunks=[];let rec;try{rec=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:8000000});}catch(e){toast('No se pudo iniciar la grabación.');return;}
-  vRec=rec;rec.ondataavailable=ev=>{if(ev.data&&ev.data.size)chunks.push(ev.data)};
+  if(audio&&aDest)aDest.stream.getAudioTracks().forEach(t=>stream.addTrack(t));
+  let rec=null,mime=null;
+  for(const m of mimeList()){try{rec=new MediaRecorder(stream,{mimeType:m,videoBitsPerSecond:6000000});mime=m;break;}catch(e){}}
+  if(!rec){try{rec=new MediaRecorder(stream);mime=rec.mimeType||'video/mp4';}catch(e){vFail('No se pudo iniciar la grabación en este navegador.');return;}}
+  const chunks=[];vRec=rec;
+  rec.ondataavailable=ev=>{if(ev.data&&ev.data.size)chunks.push(ev.data)};
+  rec.onerror=ev=>{vFail('La grabación falló: '+((ev.error&&ev.error.message)||'error desconocido'));};
   const onEnd=()=>{if(rec.state!=='inactive')rec.stop();};
   rec.onstop=()=>{v.removeEventListener('ended',onEnd);vRec=null;v.loop=true;v.muted=true;v.play().catch(()=>{});
     stream.getVideoTracks().forEach(t=>t.stop());
     $('vExport').textContent='Exportar video';$('vPlay').disabled=false;$('vProgWrap').hidden=true;
-    const type=mime.split(';')[0],ext=type.includes('mp4')?'mp4':'webm';vBlob=new Blob(chunks,{type});vName=fname(data(),ext);
-    if(!vBlob.size){toast('La grabación salió vacía. Intenta de nuevo.');return;}
+    const type=(mime||'video/mp4').split(';')[0],ext=type.includes('mp4')?'mp4':'webm';vBlob=new Blob(chunks,{type});vName=fname(curData(),ext);
+    if(!vBlob.size){vFail('La grabación salió vacía. Intenta de nuevo con la pantalla encendida.');return;}
     $('vResult').src=URL.createObjectURL(vBlob);$('vOut').hidden=false;$('vOut').scrollIntoView({behavior:'smooth',block:'nearest'});toast('Video listo');};
-  v.pause();v.loop=false;v.currentTime=0;await new Promise(r=>{v.addEventListener('seeked',r,{once:true});setTimeout(r,800);});
   v.addEventListener('ended',onEnd);
-  $('vExport').textContent='Detener y guardar';$('vPlay').disabled=true;$('vProgWrap').hidden=false;$('vOut').hidden=true;
-  await v.play().catch(()=>{});
+  try{await v.play();}catch(e){vRec=null;vFail('El navegador no dejó reproducir el video. Toca “Reproducir vista previa” y vuelve a exportar.');return;}
   await new Promise(r=>{let done=false;const go=()=>{if(!done){done=true;r();}};
     if(v.requestVideoFrameCallback)v.requestVideoFrameCallback(()=>go());else v.addEventListener('timeupdate',go,{once:true});setTimeout(go,1500);});
-  paint();rec.start(500);if(!rafId)loop();};
+  paint();
+  try{rec.start(1000);}catch(e){vRec=null;vFail('No se pudo iniciar la grabación: '+e.message);return;}
+  $('vExport').textContent='Detener y guardar';if(!rafId)loop();}
 $('vDl').onclick=()=>{if(vBlob)download(vBlob,vName);};
 $('vShare').onclick=()=>{if(vBlob)share([new File([vBlob],vName,{type:vBlob.type})]);};
 $('tUno').onclick=()=>tab(true);$('tLote').onclick=()=>tab(false);
